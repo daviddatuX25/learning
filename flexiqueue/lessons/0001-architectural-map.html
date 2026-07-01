@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 1: Flexiqueue Architectural Map</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    line-height: 1.6;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  h1 { font-size: 2rem; font-weight: 700; color: #38bdf8; margin-bottom: 0.25rem; letter-spacing: -0.02em; }
+  .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2.5rem; border-bottom: 1px solid #1e293b; padding-bottom: 1rem; }
+  h2 { font-size: 1.3rem; font-weight: 600; color: #7dd3fc; margin-top: 2rem; margin-bottom: 0.75rem; }
+  h3 { font-size: 1.05rem; font-weight: 600; color: #a5f3fc; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+  p { margin-bottom: 1rem; }
+  code { background: #1e293b; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; color: #f472b6; }
+  pre { background: #1e293b; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; border: 1px solid #334155; margin-bottom: 1.2rem; }
+  pre code { background: none; padding: 0; color: #e2e8f0; }
+  .callout {
+    background: #1e3a5f; border-left: 4px solid #38bdf8; padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0;
+  }
+  .callout strong { color: #38bdf8; }
+  ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+  li { margin-bottom: 0.3rem; }
+  a { color: #7dd3fc; }
+  .diagram {
+    background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 1.2rem; margin: 1rem 0; font-family: 'Courier New', monospace; font-size: 0.8rem; line-height: 1.5; overflow-x: auto;
+  }
+  .tag { display: inline-block; background: #1e293b; padding: 0.1em 0.5em; border-radius: 4px; font-size: 0.75rem; color: #94a3b8; margin-right: 0.25rem; }
+  .tag.infrastructure { background: #1e3a5f; color: #60a5fa; }
+  .tag.domain { background: #3b2754; color: #c084fc; }
+  .tag.realtime { background: #1e3a2f; color: #34d399; }
+  .tag.edge { background: #3b2f1e; color: #fbbf24; }
+  hr { border: none; border-top: 1px solid #1e293b; margin: 2rem 0; }
+</style>
+</head>
+<body>
+
+<h1>🏛️ Flexiqueue Architectural Map</h1>
+<p class="subtitle">Lesson 1 of N &mdash; The big picture before the details. Read this first, then explore any area deeper.</p>
+
+<h2>What This System Is</h2>
+<p>
+<strong>Flexiqueue</strong> is a queue management system for government social welfare offices (MSWDO). It replaces paper tickets and manual shouting with a coordinated multi-surface system: kiosks, display TVs, staff panels, and mobile status pages — all communicating over WebSockets on a local LAN.
+</p>
+
+<div class="callout">
+<strong>📌 Mission connection:</strong> Flexiqueue and SecureCAT-v2 share the same stack (Laravel 12 + Inertia v2 + Svelte 5). Every architectural pattern here — service layer, WebSocket strategy, offline resilience, role-based access — has a direct analog in SecureCAT-v2. The goal is to extract <em>why</em> each pattern was chosen.
+</div>
+
+<hr>
+
+<h2>🌐 The Four Surfaces</h2>
+<p>Flexiqueue coordinates four distinct client interfaces (the pitch calls them "multi-surface orchestration"):</p>
+
+<table style="width:100%; border-collapse: collapse; margin:1rem 0;">
+  <tr style="background:#1e293b;">
+    <th style="padding:0.5rem; text-align:left; border-bottom:1px solid #334155;">Surface</th>
+    <th style="padding:0.5rem; text-align:left; border-bottom:1px solid #334155;">Hardware</th>
+    <th style="padding:0.5rem; text-align:left; border-bottom:1px solid #334155;">Role</th>
+  </tr>
+  <tr><td style="padding:0.4rem; border-bottom:1px solid #1e293b;">Kiosk</td><td style="padding:0.4rem;">Orange Pi + thermal printer</td><td style="padding:0.4rem;">Walk-up ticket claiming</td></tr>
+  <tr><td style="padding:0.4rem; border-bottom:1px solid #1e293b;">Display Board</td><td style="padding:0.4rem;">TV + Orange Pi + speakers</td><td style="padding:0.4rem;">Show "Now Serving" + TTS announcements</td></tr>
+  <tr><td style="padding:0.4rem; border-bottom:1px solid #1e293b;">Staff Panel</td><td style="padding:0.4rem;">Desktop browser (any PC)</td><td style="padding:0.4rem;">Call next, serve, transfer, complete</td></tr>
+  <tr><td style="padding:0.4rem; border-bottom:1px solid #1e293b;">Mobile</td><td style="padding:0.4rem;">Student phone browser + PWA</td><td style="padding:0.4rem;">Check queue status, indoor map</td></tr>
+</table>
+
+<div class="diagram">
+┌─────────────────────────────────────────────────────┐
+│                  LOCAL LAN SERVER                     │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │  SQLite DB   │  │ Laravel App  │  │  Reverb WS  │  │
+│  │  (edge)      │  │ (inertia +   │  │  (realtime) │  │
+│  │  MariaDB     │  │  svelte 5)   │  │             │  │
+│  │  (central)   │  └──────┬───────┘  └─────┬───────┘  │
+│  └──────┬───────┘         │                 │          │
+└─────────┼─────────────────┼─────────────────┼──────────┘
+          │                 │                 │
+     ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
+     │  Kiosk  │      │ Display │      │  Staff  │
+     │(Pi+Prn) │      │(TV+Spkr)│      │  Panel  │
+     └─────────┘      └─────────┘      └─────────┘
+</div>
+
+<hr>
+
+<h2>📐 Architecture Layers (Laravel Standard + Extensions)</h2>
+
+<h3>1. Routes → Controllers</h3>
+<p>The route file (<code>routes/web.php</code>, 595 lines) is <em>heavily commented</em> with cross-references to specification documents. Routes are grouped by permission middleware, not by surface:</p>
+<ul>
+  <li><code>permission:admin.manage</code> — Program/station/token CRUD, analytics, print/TTS settings</li>
+  <li><code>permission:platform.manage</code> — Super-admin platform settings (TTS budgets, ElevenLabs)</li>
+  <li><code>permission:admin.shared</code> — Users, sites, logs, RBAC (shared between admin and super_admin)</li>
+  <li><code>permission:staff.operations</code> — Session lifecycle (bind, call, serve, transfer, complete, cancel)</li>
+  <li><code>permission:profile.self</code> — User profile, PIN/QR override, password</li>
+  <li><code>permission:dashboard.view</code> — Dashboard stats</li>
+  <li><code>permission:auth.supervisor_tools</code> — Temporary PIN/QR generation</li>
+  <li>No auth — Public routes (kiosk, display, status check, triage)</li>
+</ul>
+
+<div class="callout">
+<strong>🧠 For SecureCAT-v2:</strong> Flexiqueue's permission middleware pattern (Spatie groups per route group, not per route) is cleaner than individual middleware on each route. Consider grouping your AI and ML endpoints behind <code>permission:ai.manage</code> etc.
+</div>
+
+<h3>2. Controller → Service Layer</h3>
+<p>Controllers are <strong>thin</strong>. <code>DisplayController.php</code> is 33KB but most is Inertia page rendering. Business logic lives in <strong>50+ service classes</strong> under <code>app/Services/</code>:</p>
+<table style="width:100%; border-collapse: collapse; margin:1rem 0;">
+  <tr style="background:#1e293b;">
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Service</th>
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Responsibility</th>
+  </tr>
+  <tr><td style="padding:0.3rem;"><code>SessionService</code></td><td style="padding:0.3rem;">Queue session lifecycle (1,261 lines — the largest)</td></tr>
+  <tr><td style="padding:0.3rem;"><code>FlowEngine</code></td><td style="padding:0.3rem;">Pure state machine: given a session, what's the next station?</td></tr>
+  <tr><td style="padding:0.3rem;"><code>StationQueueService</code></td><td style="padding:0.3rem;">Queue ordering: priority lanes, alternate ratio, FIFO</td></tr>
+  <tr><td style="padding:0.3rem;"><code>StationSelectionService</code></td><td style="padding:0.3rem;">Which station should handle a process?</td></tr>
+  <tr><td style="padding:0.3rem;"><code>EdgeModeService</code></td><td style="padding:0.3rem;">Detects if running on edge (Pi) vs central; provides runtime context</td></tr>
+  <tr><td style="padding:0.3rem;"><code>EdgePairingService</code></td><td style="padding:0.3rem;">Device pairing: QR code, approval, token claim</td></tr>
+  <tr><td style="padding:0.3rem;"><code>ProgramService</code></td><td style="padding:0.3rem;">Program lifecycle and settings</td></tr>
+  <tr><td style="padding:0.3rem;"><code>TokenService</code></td><td style="padding:0.3rem;">Token generation, bulk operations, TTS regeneration</td></tr>
+  <tr><td style="padding:0.3rem;"><code>IdentityBindingService</code></td><td style="padding:0.3rem;">Anon token → identity registration flow</td></tr>
+</table>
+
+<div class="callout">
+<strong>🧠 For SecureCAT-v2:</strong> Notice services depend on <em>other services</em> via constructor injection (e.g., <code>SessionService</code> takes <code>FlowEngine</code>, <code>StationSelectionService</code>, <code>PinService</code>, etc.). This composes domain logic from small, testable units. Your OMR service and AI Triage service should follow the same pattern — inject the AI SDK client service, don't call it from the controller.
+</div>
+
+<h3>3. The FlowEngine (State Machine Pattern)</h3>
+<p>The <code>FlowEngine</code> is a <strong>pure routing algorithm</strong> — 74 lines with no database writes. Given a Session, it determines the next station/process:</p>
+<pre><code>// Simplified logic:
+function calculateNextStation(Session $session) {
+    // 1. If session has override_steps (custom one-off path), use those
+    // 2. Otherwise, query TrackStep where step_order = current + 1
+    // 3. If that TrackStep has a process_id, return it (caller picks station via StationSelectionService)
+    // 4. Return null = flow complete
+}</code></pre>
+
+<ul>
+  <li><strong>Normal flow:</strong> A token is bound to a <code>Track</code> (e.g., "Registration"). The track has ordered <code>TrackSteps</code> (Step 1: Registrar Window, Step 2: Cashier, Step 3: Library). The FlowEngine walks through them one by one.</li>
+  <li><strong>Override flow:</strong> A supervisor can assign <code>override_steps</code> (an array of station IDs) to handle one-off routing ("go to Window 5 directly").</li>
+  <li><strong>Process → Station selection:</strong> The PROCESS-STATION-REFACTOR decoupled processes (work types) from stations (physical desks). Now a TrackStep points to a Process, and <code>StationSelectionService</code> picks the best station for that process.</li>
+</ul>
+
+<div class="callout">
+<strong>🧠 For SecureCAT-v2:</strong> If you implement a "Service Triage" state machine (student → triage → AI assessment → OMR → completion), a FlowEngine-like class keeps routing logic isolated and testable. The override_steps pattern is useful for manual override when AI triage suggests a non-standard path.
+</div>
+
+<hr>
+
+<h2>🗄️ Data Model (Core Entities)</h2>
+
+<div class="diagram">
+┌──────────┐    ┌──────────┐    ┌──────────────┐
+│ Program   │───>│  Track   │───>│  TrackStep    │
+│ (active)  │    │(service) │    │(ordered step) │
+└──────────┘    └──────────┘    └──────┬───────┘
+       │                               │
+       │                         ┌─────▼──────┐
+       │                         │  Process    │
+       │                         │ (work type) │
+       │                         └──────┬──────┘
+       │                                │
+       │                         ┌──────▼──────┐
+       │                         │  Station     │
+       │                         │ (desk/window)│
+       │                         └──────┬──────┘
+       │                                │
+┌──────▼──────┐                  ┌──────▼──────┐
+│    Token     │                  │   Session    │
+│ (unique QR)  │<────────────────>│(queue_sessns)│
+└──────────────┘   bound to       └──────┬──────┘
+                                          │
+                                   ┌──────▼──────┐
+                                   │TransactionLog│
+                                   │ (append-only)│
+                                   └─────────────┘
+</div>
+
+<p><strong>Key schema decisions worth studying in the migrations:</strong></p>
+<ol>
+  <li><strong>Token → Session separation:</strong> A token is a static identifier (printed ticket with QR). A session is a dynamic journey (token + track + stations visited). One token can be used in multiple sessions if it re-queues. This separation is smart — it decouples identity from state.</li>
+  <li><strong>Append-only TransactionLog:</strong> Every queue action (bind, call, serve, transfer, complete, cancel) is <em>inserted</em>, never updated or deleted. This gives COA-compliant audit trails. In SQLite, <code>INSERT</code> is extremely cheap and ACID-safe.</li>
+  <li><strong>Program settings as JSON column:</strong> <code>Program</code> has a <code>settings</code> JSON column rather than 20 separate columns. This allows flexible per-program configuration (priority lane ratios, TTS settings, display preferences) without schema migrations.</li>
+  <li><strong>Station ↔ Process M:M:</strong> The pivot table <code>station_process</code> allows any station to serve any process. This decouples physical desk layout from workflow definition.</li>
+</ol>
+
+<hr>
+
+<h2>⚡ Realtime (WebSocket) Architecture</h2>
+<p>Flexiqueue uses <strong>Laravel Reverb</strong> on the edge (local LAN) and <strong>Pusher</strong> on the central (cloud) instance. Both implement the same broadcasting API — the <code>.env</code> file switches between them.</p>
+
+<p><strong>Key events fired:</strong></p>
+<ul>
+  <li><code>NowServing</code> — Triggered when staff calls a token. Display boards pick this up and update their UI + TTS.</li>
+  <li><code>QueueLengthUpdated</code> — For dashboard widgets and mobile status.</li>
+  <li><code>ClientArrived</code> — When a kiosk user prints a ticket.</li>
+  <li><code>StatusUpdate</code> — Generic status change broadcast.</li>
+  <li><code>StationActivity</code> — Station-level activity log.</li>
+</ul>
+
+<div class="callout">
+<strong>🧠 For SecureCAT-v2:</strong> Reverb vs Pusher dual-config means you can develop locally with Pusher (no extra daemon) and deploy with Reverb (no external dependency). This is exactly the pattern you want for your AI Companion's realtime chat — use Pusher during dev, Reverb in production so you control the data.
+</div>
+
+<hr>
+
+<h2>🔐 RBAC & Authorization</h2>
+<p>Built on <strong>Spatie Laravel Permission</strong> with a custom sync layer (<code>SpatieRbacSyncService</code>). Route comments reference a <code>SUPER-ADMIN-VS-ADMIN-SPEC</code> spec:</p>
+<ul>
+  <li><strong>Super Admin</strong> (<code>platform.manage</code>) — Platform-level settings, TTS budgets, integrations.</li>
+  <li><strong>Admin</strong> (<code>admin.manage</code>) — Program/station/token CRUD, analytics, print settings.</li>
+  <li><strong>Shared</strong> (<code>admin.shared</code>) — Users, sites, logs (both Super Admin and Admin).</li>
+  <li><strong>Staff</strong> (<code>staff.operations</code>) — Session operations (call, serve, transfer).</li>
+  <li><strong>Supervisor</strong> (<code>auth.supervisor_tools</code>) — Temporary PIN/QR generation.</li>
+</ul>
+<p>There's also a <strong>device-level auth</strong> via <code>auth.edge_device</code> middleware (API tokens for edge devices, not user sessions).</p>
+
+<hr>
+
+<h2>🌍 Edge vs Central (Offline-First)</h2>
+<p>Flexiqueue has <strong>two deployment modes</strong>:</p>
+
+<table style="width:100%; border-collapse: collapse; margin:1rem 0;">
+  <tr style="background:#1e293b;">
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;"></th>
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Edge (Orange Pi)</th>
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Central (cloud)</th>
+  </tr>
+  <tr><td style="padding:0.3rem;">Database</td><td style="padding:0.3rem;">SQLite (zero-config, low-memory)</td><td style="padding:0.3rem;">MariaDB</td></tr>
+  <tr><td style="padding:0.3rem;">WebSocket</td><td style="padding:0.3rem;">Laravel Reverb (local)</td><td style="padding:0.3rem;">Pusher (cloud)</td></tr>
+  <tr><td style="padding:0.3rem;">Internet needed?</td><td style="padding:0.3rem;">❌ No — 100% offline</td><td style="padding:0.3rem;">✅ Yes</td></tr>
+  <tr><td style="padding:0.3rem;">Sync</td><td style="padding:0.3rem;">Pushes transaction logs → central</td><td style="padding:0.3rem;">Receives + replays logs</td></tr>
+  <tr><td style="padding:0.3rem;">Detection</td><td style="padding:0.3rem;"><code>EdgeModeService</code> runtime detection</td><td style="padding:0.3rem;">N/A</td></tr>
+</table>
+
+<p>The edge sync is a <strong>transaction-log-based push</strong>: the edge device inserts into <code>transaction_logs</code>, and a background job POSTs unsynced logs to the central endpoint (<code>POST /api/edge/sync</code>). The central server replays them to reconstruct state. This is conceptually simpler than real-time replication: <strong>no conflict resolution needed</strong> because each site's tokens are scoped by site ID.</p>
+
+<div class="callout">
+<strong>🧠 For SecureCAT-v2:</strong> If you have an offline component (e.g., OMR scanning on a Raspberry Pi), consider transaction-log push rather than full DB replication. It's simpler, COA-compliant, and avoids conflict resolution. Just scope records by device ID.
+</div>
+
+<hr>
+
+<h2>🔍 Key Architectural Patterns Summary</h2>
+
+<table style="width:100%; border-collapse: collapse; margin:1rem 0;">
+  <tr style="background:#1e293b;">
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Pattern</th>
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Flexiqueue Implementation</th>
+    <th style="padding:0.3rem; text-align:left; border-bottom:1px solid #334155;">Why It Matters</th>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Service Layer Composition</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Services inject other services; controllers inject services</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Unit-testable domain logic, thin controllers</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">State Machine</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">FlowEngine: pure function session → next station</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Routing logic centralized, no if/else spaghetti in controllers</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Process/Station Separation</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">M:M pivot, selection service picks best station</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Decouples workflow from physical layout</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Append-Only Audit</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">TransactionLog: INSERT-only, never UPDATE/DELETE</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Tamper-proof logging, COA compliance</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Dual WebSocket Driver</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">.env switch: Reverb (local) / Pusher (cloud)</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Dev with cloud, deploy without dependency</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">JSON Settings Columns</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Program.settings as JSON instead of 20 columns</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">No migrations for new config knobs</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Permission Route Grouping</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">Routes grouped by permission, not by surface</td>
+    <td style="padding:0.3rem; border-bottom:1px solid #1e293b;">One middleware per group, Lazy loading, not per-route</td>
+  </tr>
+  <tr>
+    <td style="padding:0.3rem;">Transaction-Log Sync</td>
+    <td style="padding:0.3rem;">Edge pushes logs; central replays them</td>
+    <td style="padding:0.3rem;">Simple offline sync without conflict resolution</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>📖 Recommended Next Steps</h2>
+<p>This lesson is the map. To go deeper:</p>
+<ol>
+  <li><strong>Read <code>routes/web.php</code></strong> (595 lines) — the comments are mini-ADRs explaining <em>why</em> each route group exists.</li>
+  <li><strong>Trace a session lifecycle</strong> — From <code>SessionService::bind()</code> → <code>FlowEngine::calculateNextStation()</code> → <code>SessionService::call()</code> → <code>StationQueueService::getQueueForStation()</code>. This is the critical path.</li>
+  <li><strong>Examine the TransactionLog migration</strong> and its indexed columns — understand what makes COA compliance work.</li>
+  <li><strong>Study the EdgeDevice flow</strong> — <code>EdgePairingService</code>, <code>EdgeModeService</code>, and <code>routes/api.php</code> for the device API.</li>
+  <li><strong>Ask me about any of these</strong> — I'm here. What do you want to dive into first?</li>
+</ol>
+
+<hr>
+
+<p style="color:#64748b; font-size:0.8rem; text-align:center;">
+  Lesson 1 of N · Teaching workspace at <code>teaching-space/lessons/0001-architectural-map.html</code><br>
+  Created for SecureCAT-v2 architecture research
+</p>
+
+</body>
+</html>
