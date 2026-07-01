@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1: The Laravel Request-Response Lifecycle</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<article>
+
+<h1>Lesson 1: The Laravel Request-Response Lifecycle</h1>
+<p class="dim">Tracing a real SecureCAT page from URL to browser</p>
+
+<blockquote>
+<strong>Mission:</strong> Understand how a URL like <code>/admin/exam-scheduling</code> becomes a fully rendered HTML page in the browser. This is the single most important mental model for Laravel development.
+</blockquote>
+
+<h2>Why this matters</h2>
+<p>Every framework has a "pipeline" — a fixed sequence of steps every request goes through. When you know the pipeline, you stop guessing. You know <em>exactly</em> where to add a feature, where to fix a bug, and why errors happen at certain stages.</p>
+
+<h2>The route we're tracing</h2>
+
+<p>From <span class="file-path">routes/web.php</span> (line ~200):</p>
+
+<pre><code><span class="com">// Route registered inside middleware group 'auth' and 'role:...'</span>
+Route::middleware('role:<span class="str">super_admin,registrar_administrator,test_administrator,proctor</span>')
+    ->prefix('<span class="str">admin</span>')
+    ->name('<span class="str">admin.</span>')
+    ->group(function () {
+        Route::get('<span class="str">exam-scheduling</span>', [ExamSessionController::<span class="fn">class</span>, '<span class="fn">index</span>'])
+            ->name('<span class="str">exam-scheduling.index</span>');
+    });
+</code></pre>
+
+<hr>
+
+<h2>The full pipeline (9 stages)</h2>
+
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <strong>Entry — <span class="file-path">public/index.php</span></strong>
+    <p>Every request to Laravel arrives here. Apache/Nginx rewrites all URLs to this file. It loads Composer's autoloader, then bootstraps the Laravel application instance and kernel.</p>
+    <pre><code><span class="com">// public/index.php (simplified)</span>
+$app = <span class="kw">require</span> __DIR__.'/../bootstrap/app.php';
+$kernel = $app->make(Kernel::<span class="kw">class</span>);
+$response = $kernel->handle(
+    $request = Request::<span class="fn">capture</span>()
+)-&gt;send();
+$kernel->terminate($request, $response);</code></pre>
+    <blockquote class="callout info"><strong>Junior note:</strong> You'll almost never edit this file. It's the "engine starter" — you just need to know it exists and that <code>$kernel->handle()</code> is where the pipeline begins.</blockquote>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <strong>Kernel — <span class="file-path">app/Http/Kernel.php</span></strong>
+    <p>The HTTP Kernel defines <strong>middleware stacks</strong>. Every request passes through:</p>
+    <ul>
+      <li><strong>Global middleware</strong> — runs on every request (trusted proxies, maintenance mode check, etc.)</li>
+      <li><strong>Web middleware group</strong> — session handling, CSRF protection, cookie encryption, <code>HandleInertiaRequests</code></li>
+      <li><strong>Route-specific middleware</strong> — whatever you attach to the route itself</li>
+    </ul>
+    <p>For our route, the effective middleware stack (in order) is:</p>
+    <pre>web group →
+  auth →                    checks user is logged in
+  role:super_admin,... →    checks user has one of these roles
+  verified: true            (implicit — email verification if enabled)</pre>
+    <blockquote class="callout warn"><strong>Gotcha:</strong> The <code>role</code> middleware is registered as a named middleware in <code>$routeMiddleware</code>. In SecureCAT it's <span class="file-path">app/Http/Middleware/EnsureUserHasRole.php</span> — just 29 lines.</blockquote>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <strong>Middleware: <span class="file-path">EnsureUserHasRole.php</span></strong>
+    <p>Let's look at the actual code:</p>
+    <pre><code><span class="kw">class</span> <span class="ty">EnsureUserHasRole</span>
+{
+    <span class="kw">public function</span> <span class="fn">handle</span>(Request $request, Closure $next, <span class="kw">string</span> ...$roles): Response
+    {
+        <span class="kw">if</span> (! $request->user()) {
+            <span class="kw">return</span> redirect()->route('<span class="str">login</span>');
+        }
+
+        <span class="kw">if</span> (! $request->user()->hasAnyRole($roles)) {
+            abort(<span class="num">403</span>, '<span class="str">Unauthorized. Required role: </span>'.implode('<span class="str"> or </span>', $roles));
+        }
+
+        <span class="kw">return</span> $next($request);
+    }
+}</code></pre>
+    <p>Two checks, 15 lines of logic. If either check fails, the request never reaches the controller — you get a redirect or 403 page instead.</p>
+    <blockquote class="callout tip"><strong>Key insight:</strong> Middleware is a <strong>stack</strong> (or "onion"). Each layer can either pass the request inward (<code>$next($request)</code>) or short-circuit it (redirect/abort). The response travels back <em>out</em> through the same layers in reverse order.</blockquote>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <strong>Routing — <span class="file-path">routes/web.php</span></strong>
+    <p>Once middleware passes, the Router matches the URL path <code>/admin/exam-scheduling</code> against all registered routes. It finds the match and calls the controller method.</p>
+    <pre><code>Route::get('<span class="str">exam-scheduling</span>', [ExamSessionController::<span class="kw">class</span>, '<span class="fn">index</span>'])
+    ->name('<span class="str">admin.exam-scheduling.index</span>');</code></pre>
+    <p>The route name (<code>admin.exam-scheduling.index</code>) lets you generate URLs in templates and controllers without hardcoding paths — <code>route('admin.exam-scheduling.index')</code> gives you <code>/admin/exam-scheduling</code>.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">5</div>
+  <div class="step-body">
+    <strong>Controller — <span class="file-path">ExamSessionController.php</span></strong>
+    <p>The <code>index()</code> method runs. Here's the simplified flow:</p>
+    <pre><code><span class="kw">public function</span> <span class="fn">index</span>(Request $request): Response
+{
+    <span class="com">// 5a. Authorize via Policy</span>
+    $this->authorize('<span class="str">viewAny</span>', ExamSession::<span class="kw">class</span>);
+
+    <span class="com">// 5b. Determine if this is a proctor view</span>
+    $isProctorView = $user->hasAnyRole(['<span class="str">proctor</span>'])
+        && ! $user->hasAnyRole(['<span class="str">super_admin</span>', '<span class="str">registrar_administrator</span>']);
+
+    <span class="com">// 5c. Query exam sessions with eager loading</span>
+    $query = ExamSession::query()
+        ->with(['<span class="str">room:id,name,building,capacity</span>', '<span class="str">proctors:id,name</span>'])
+        ->orderBy('<span class="str">date</span>')->orderBy('<span class="str">start_time</span>');
+
+    <span class="com">// 5d. Apply filters from query string</span>
+    <span class="kw">if</span> ($request->filled('<span class="str">status</span>')) {
+        $query->where('<span class="str">status</span>', $request->get('<span class="str">status</span>'));
+    }
+    <span class="com">// ... more filters ...</span>
+
+    $sessions = $query->paginate(<span class="num">15</span>)->withQueryString();
+
+    <span class="com">// 5e. Build payload & render via Inertia</span>
+    <span class="kw">return</span> Inertia::render('<span class="str">Admin/TestScheduling/Index</span>', [
+        '<span class="str">sessions</span>' => $sessions,
+        '<span class="str">filters</span>' => $request->only([...]),
+        <span class="com">// ... more data ...</span>
+    ]);
+}</code></pre>
+    <blockquote class="callout info"><strong>Junior note:</strong> Notice the controller doesn't build HTML directly. It just gathers data and passes it to Inertia. This is the "thin controller, fat service" pattern — SecureCAT moves complex logic into service classes.</blockquote>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">6</div>
+  <div class="step-body">
+    <strong>Policy — <span class="file-path">app/Policies/ExamSessionPolicy.php</span></strong>
+    <p>The <code>$this->authorize('viewAny')</code> call in step 5 checks the <code>ExamSessionPolicy</code> to see if the user is allowed to list exam sessions. If the policy returns <code>false</code>, Laravel throws a 403 exception before any data is queried.</p>
+    <pre><code><span class="kw">class</span> <span class="ty">ExamSessionPolicy</span>
+{
+    <span class="kw">public function</span> <span class="fn">viewAny</span>(User $user): bool
+    {
+        <span class="kw">return</span> $user->hasAnyRole([
+            '<span class="str">super_admin</span>',
+            '<span class="str">registrar_administrator</span>',
+            '<span class="str">test_administrator</span>',
+            '<span class="str">proctor</span>',
+        ]);
+    }
+}</code></pre>
+    <p>Two layers of authorization here: the <strong>middleware</strong> checks the role at the route level (gate), then the <strong>policy</strong> checks at the resource level (finer-grained). Redundant? Sometimes. But defense-in-depth is intentional — the policy also applies when calling from other contexts (like API or queued jobs).</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">7</div>
+  <div class="step-body">
+    <strong>Inertia Middleware — <span class="file-path">HandleInertiaRequests.php</span></strong>
+    <p>Before Inertia sends the response, this middleware injects <strong>shared props</strong> — data available on every page. In SecureCAT, that includes:</p>
+    <pre><code><span class="kw">public function</span> <span class="fn">share</span>(Request $request): array
+{
+    <span class="kw">return</span> array_merge(parent::share($request), [
+        '<span class="str">auth</span>' => [<span class="str">'user'</span> => $authUser],
+        '<span class="str">flash</span>' => [
+            '<span class="str">success</span>' => $request->session()->get('<span class="str">success</span>'),
+            '<span class="str">error</span>'   => $request->session()->get('<span class="str">error</span>'),
+        ],
+        '<span class="str">csrf_token</span>' => $request->session()->token(),
+        '<span class="str">notifications</span>' => $user?->notifications()->latest()->limit(<span class="num">20</span>)->get(),
+        '<span class="str">activeAcademicYear</span>' => $this->resolveActiveAcademicYear(),
+        <span class="com">// ... more shared state ...</span>
+    ]);
+}</code></pre>
+    <p>These props are available in <em>every</em> Svelte page via <code>$page.props</code>. That's why <code>AuthenticatedLayout.svelte</code> can access <code>$page.props.auth.user</code> without it being passed in each controller.</p>
+    <blockquote class="callout warn"><strong>Watch out:</strong> <code>HandleInertiaRequests</code> runs on every authenticated request. Avoid putting expensive DB queries here — they run on every page load, not just the one that needs them. SecureCAT loads notifications here, which is fine because it's limited to 20.</blockquote>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">8</div>
+  <div class="step-body">
+    <strong>Inertia rendering — Server to Client</strong>
+    <p>Inertia receives the controller's data and shared props, then:</p>
+    <ol>
+      <li><strong>First visit:</strong> Renders a full Blade view (<code>resources/views/app.blade.php</code>) that loads the Svelte app. It bootstraps the page data as a JSON <code>&lt;div id="app" data-page="..."&gt;</code> attribute.</li>
+      <li><strong>Subsequent visits (SPA):</strong> Sends a JSON response with <code>X-Inertia</code> header. The client-side router swaps the component without a full page reload.</li>
+    </ol>
+    <pre><code><span class="com">// This is what Inertia::render() does internally:</span>
+{
+  "<span class="str">component</span>": "<span class="str">Admin/TestScheduling/Index</span>",
+  "<span class="str">props</span>": {
+    "<span class="str">auth</span>": { "<span class="str">user</span>": { <span class="str">"id"</span>: <span class="num">1</span>, <span class="str">"name"</span>: <span class="str">"admin"</span>, ... } },
+    "<span class="str">sessions</span>": { "<span class="str">data</span>": [...], "<span class="str">meta</span>": { ... } },
+    "<span class="str">filters</span>": { ... },
+    ...
+  },
+  "<span class="str">url</span>": "<span class="str">/admin/exam-scheduling</span>",
+  "<span class="str">version</span>": "<span class="str">abc123</span>"
+}</code></pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">9</div>
+  <div class="step-body">
+    <strong>Svelte page — <span class="file-path">resources/js/Pages/Admin/TestScheduling/Index.svelte</span></strong>
+    <p>The Svelte component receives <code>sessions</code>, <code>filters</code>, <code>statuses</code>, etc. as props from Inertia. It renders the exam scheduling table inside <span class="file-path">AuthenticatedLayout.svelte</span>, which provides the sidebar, header, notifications dropdown, and theme toggle.</p>
+    <pre><code><span class="com">&lt;!-- Simplified structure of the Svelte page --&gt;</span>
+&lt;<span class="kw">script</span>&gt;
+  <span class="kw">let</span> { sessions, filters, statuses, breadcrumbParent } = $props();
+  <span class="kw">let</span> search = $state(filters.search ?? '');
+  <span class="kw">let</span> statusFilter = $state(filters.status ?? '');
+
+  <span class="kw">function</span> <span class="fn">applyFilters</span>() {
+    router.get('<span class="str">/admin/exam-scheduling</span>', {
+      search, status: statusFilter
+    }, { preserveState: <span class="kw">true</span> });
+  }
+&lt;/<span class="kw">script</span>&gt;
+
+&lt;AuthenticatedLayout breadcrumbs={breadcrumbParent}&gt;
+  &lt;div class="<span class="str">p-6</span>"&gt;
+    &lt;h1&gt;Exam Scheduling&lt;/h1&gt;
+    &lt;input bind:value={search} placeholder="<span class="str">Search rooms...</span>" /&gt;
+    {#each sessions.data as session (session.id)}
+      &lt;!-- render each session row --&gt;
+    {/each}
+  &lt;/div&gt;
+&lt;/AuthenticatedLayout&gt;</code></pre>
+    <blockquote class="callout tip"><strong>Svelte 5 note:</strong> <code>$props()</code> is a <strong>rune</strong> — Svelte 5's new reactivity primitive. It replaces the old <code>export let</code> syntax. <code>$state()</code> creates reactive local variables. When they change, the DOM updates automatically.</blockquote>
+  </div>
+</div>
+
+<hr>
+
+<h2>Visual summary: the full round-trip</h2>
+
+<pre><code>Browser
+  │  GET /admin/exam-scheduling
+  ▼
+public/index.php                       ← Entry point
+  │
+  ▼
+Global Middleware                      ← Trusted proxies, maintenance mode
+  │
+  ▼
+Web Middleware Group                   ← Sessions, CSRF, cookies
+  │
+  ▼
+auth Middleware                        ← Are you logged in?
+  │  └─ redirect /login if not
+  ▼
+role Middleware                        ← Do you have the right role?
+  │  └─ abort(403) if not
+  ▼
+Router                                 ← Match /admin/exam-scheduling
+  │
+  ▼
+ExamSessionPolicy::viewAny()          ← Authorization check
+  │  └─ abort(403) if denied
+  ▼
+ExamSessionController::index()         ← Business logic
+  │  └─ ExamSession::query()->with(...)->paginate()
+  │  └─ AcademicYear::active()
+  │  └─ scheduleAssistantPayload()
+  ▼
+HandleInertiaRequests::share()         ← Shared props (auth, flash, etc.)
+  │
+  ▼
+Inertia::render('...', $payload)       ← JSON + component name
+  │
+  ▼
+Svelte Page Component                  ← Renders HTML
+  │
+  ▼
+Browser renders DOM</code></pre>
+
+<h2>Where technical debt hides in this flow</h2>
+
+<table>
+  <tr>
+    <th>Stage</th>
+    <th>What a junior might miss</th>
+  </tr>
+  <tr>
+    <td>Middleware</td>
+    <td><code>role</code> middleware runs <em>after</em> <code>auth</code>. If auth passes but role fails, the 403 page loads — but session data was already read. Not a perf issue here, but ordering matters when you add middleware that queries the DB.</td>
+  </tr>
+  <tr>
+    <td>Controller</td>
+    <td><code>$this->authorize('viewAny')</code> at line 51 — if you forget this, any role-based user could hit this page even if the middleware lets them through.</td>
+  </tr>
+  <tr>
+    <td>Eloquent</td>
+    <td><code>->with(['room:id,...', 'proctors:id,...'])</code> — this eager-loads to prevent N+1 queries. Without it, every session in the loop would query the room separately. <strong>N+1 is the #1 performance bug in Laravel.</strong></td>
+  </tr>
+  <tr>
+    <td>Shared Props</td>
+    <td><code>HandleInertiaRequests</code> queries notifications and academic year on <em>every</em> page. If the project grows, these should be lazy-loaded or cached.</td>
+  </tr>
+  <tr>
+    <td>Controller size</td>
+    <td><code>ExamSessionController</code> is 1,012 lines — too big. The <code>scheduleAssistantPayload()</code> private method (lines 122-204) really belongs in a Service class.</td>
+  </tr>
+  <tr>
+    <td>No tests</td>
+    <td>Zero files in <code>tests/</code>. This means there's no automated safety net — you can't refactor with confidence.</td>
+  </tr>
+</table>
+
+<h2>Your turn — practice</h2>
+
+<ol>
+  <li>Open <span class="file-path">routes/web.php</span> and find the route for <code>/admin/grading</code>. What controller method does it map to? What middleware protects it?</li>
+  <li>Open <span class="file-path">app/Http/Controllers/DashboardController.php</span>. Trace its <code>index()</code> method — what data does it send to the Svelte page?</li>
+  <li>Check <span class="file-path">resources/js/Pages/Dashboard.svelte</span> — what <code>$props()</code> does it expect?</li>
+  <li>Open <span class="file-path">app/Http/Kernel.php</span> — what global middleware and middleware groups are defined?</li>
+</ol>
+
+<blockquote><strong>Follow up:</strong> If anything is unclear, ask me directly. I can open any file and walk through it with you.</blockquote>
+
+<div class="footer">
+  <p>Lesson 1 of the SecureCAT learning track | <a href="../learning-records/0001-understood-lifecycle.md">Learning record</a> | <a href="../reference/laravel-glossary.html">Reference: Laravel Glossary</a></p>
+</div>
+
+</article>
+</body>
+</html>
